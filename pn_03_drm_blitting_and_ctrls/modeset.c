@@ -29,6 +29,13 @@
 int initialize_screens(struct sp_dev *dev) {
 	int ret, i, j;
 
+	printf("num connectors: %i\n", dev->num_connectors);
+	for (i = 0; i < dev->num_connectors; i++) {
+		drmModeConnectorPtr c = dev->connectors[i];
+		printf("Connector: %i, id: %u\n", i, c->connector_id);
+
+	}
+
 	for (i = 0; i < dev->num_connectors; i++) {
 		drmModeConnectorPtr c = dev->connectors[i];
 		drmModeModeInfoPtr m = NULL;
@@ -44,16 +51,17 @@ int initialize_screens(struct sp_dev *dev) {
 		}
 
 		/* Take the first unless there's a preferred mode */
-		m = &c->modes[0];
-		for (j = 0; j < c->count_modes; j++) {
-			drmModeModeInfoPtr tmp_m = &c->modes[j];
+		// the second should be: DRM_FORMAT_R4
+		m = &c->modes[1];
+		/* for (j = 0; j < c->count_modes; j++) { */
+		/* 	drmModeModeInfoPtr tmp_m = &c->modes[j]; */
 
-			if (!(tmp_m->type & DRM_MODE_TYPE_PREFERRED))
-				continue;
+		/* 	if (!(tmp_m->type & DRM_MODE_TYPE_PREFERRED)) */
+		/* 		continue; */
 
-			m = tmp_m;
-			break;
-		}
+		/* 	m = tmp_m; */
+		/* 	break; */
+		/* } */
 
 		if (!c->encoder_id) {
 			/*
@@ -109,8 +117,18 @@ int initialize_screens(struct sp_dev *dev) {
 		}
 
 		/* XXX: Hardcoding the format here... :| */
-		cr->scanout = create_sp_bo(dev, m->hdisplay, m->vdisplay,
-					   24, 32, DRM_FORMAT_XRGB8888, 0);
+		/* cr->scanout = create_sp_bo(dev, m->hdisplay, m->vdisplay, */
+		/* 			   24, 32, DRM_FORMAT_XRGB8888, 0); */
+		printf(" m->hdisplay/vdisplay: %u %i\n", m->hdisplay, m->vdisplay);
+		cr->scanout = create_sp_bo(
+			dev,
+		   	m->hdisplay,
+		   	m->vdisplay,
+			0,
+		   	4,
+		   	DRM_FORMAT_R4,
+		   	0
+		);
 		if (!cr->scanout) {
 			printf("failed to create new scanout bo\n");
 			continue;
@@ -118,13 +136,29 @@ int initialize_screens(struct sp_dev *dev) {
 
 		fill_bo(cr->scanout, 0xFF, 0x0, 0x0, 0x0);
 
-		ret = drmModeSetCrtc(dev->fd, cr->crtc->crtc_id,
-				     cr->scanout->fb_id, 0, 0, &c->connector_id,
-				     1, m);
+		printf("initial modesetCRTC: crtc_id: %u fb_id: %u conn-id: %u\n",
+		   	cr->crtc->crtc_id,
+			cr->scanout->fb_id,
+		   	c->connector_id
+		);
+
+		ret = drmModeSetCrtc(
+			dev->fd,
+		   	cr->crtc->crtc_id,
+			cr->scanout->fb_id,
+		   	0,
+		   	0,
+		   	&c->connector_id,
+			1,
+		   	m
+		);
 		if (ret) {
 			printf("failed to set crtc mode ret=%d\n", ret);
 			continue;
 		}
+		printf("Pausing after initial modeset");
+		char modifier_key;
+		modifier_key = getchar();
 		cr->crtc = drmModeGetCrtc(dev->fd, cr->crtc->crtc_id);
 		/*
 		 * Todo:
@@ -179,6 +213,8 @@ int set_sp_plane(struct sp_dev *dev, struct sp_plane *plane,
 	int ret;
 	uint32_t w, h;
 
+	printf("set_sp_plane to framebuffer: %u\n", plane->bo->fb_id);
+
 	w = plane->bo->width;
 	h = plane->bo->height;
 
@@ -187,9 +223,21 @@ int set_sp_plane(struct sp_dev *dev, struct sp_plane *plane,
 	if ((h + y) > crtc->crtc->mode.vdisplay)
 		h = crtc->crtc->mode.vdisplay - y;
 
-	ret = drmModeSetPlane(dev->fd, plane->plane->plane_id,
-			      crtc->crtc->crtc_id, plane->bo->fb_id, 0, x, y, w, h,
-			      0, 0, w << 16, h << 16);
+	printf("Setting plane: %u %u %i %i\n", w, h, x, y);
+	printf("crtc id: %i plane_id: %i\n", crtc->crtc->crtc_id, plane->plane->plane_id);
+	printf("bo id: %i\n", plane->bo->fb_id);
+	ret = drmModeSetPlane(
+		dev->fd,
+	   	plane->plane->plane_id,
+		crtc->crtc->crtc_id,
+	   	plane->bo->fb_id,
+		0,
+	   	x, y, w, h,
+		0,
+	   	0,
+		w << 16, h << 16
+		/* w, h */
+	);
 	if (ret) {
 		printf("failed to set plane to crtc ret=%d\n", ret);
 		return ret;

@@ -301,7 +301,8 @@ static void init_mem2mem_dev()
         return;
     }
 
-    if (!(cap.capabilities & V4L2_CAP_VIDEO_M2M)) {
+    // if (!(cap.capabilities & V4L2_CAP_VIDEO_M2M)) {
+    if (!(cap.capabilities & V4L2_CAP_VIDEO_M2M_MPLANE)) {
         fprintf(stderr, "Device does not support m2m\n");
         exit(EXIT_FAILURE);
     }
@@ -311,27 +312,53 @@ static void init_mem2mem_dev()
     }
 
     /* Set format for output */
-    fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    fmt.fmt.pix.width = SRC_WIDTH;
-    fmt.fmt.pix.height = SRC_HEIGHT;
-    fmt.fmt.pix.pixelformat = src_format;
-    fmt.fmt.pix.field = V4L2_FIELD_ANY;
+	// single-plane format
+	// src_format = RGB24
+    //struct v4l2_format fmt;
+    /* fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; */
+    /* fmt.fmt.pix.width = SRC_WIDTH; */
+    /* fmt.fmt.pix.height = SRC_HEIGHT; */
+    /* fmt.fmt.pix.pixelformat = src_format; */
+    /* fmt.fmt.pix.field = V4L2_FIELD_ANY; */
 
-	printf("stride 1: %i\n", fmt.fmt.pix.bytesperline);
+	// multi-plane format
+    fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+    fmt.fmt.pix_mp.width = SRC_WIDTH;
+    fmt.fmt.pix_mp.height = SRC_HEIGHT;
+    fmt.fmt.pix_mp.pixelformat = src_format;
+    fmt.fmt.pix_mp.field = V4L2_FIELD_ANY;
+
+    fmt.fmt.pix_mp.num_planes = 1;
+    fmt.fmt.pix_mp.plane_fmt[0].sizeimage = 1872 * 1404 * 3;
+    fmt.fmt.pix_mp.plane_fmt[0].bytesperline = 1872 * 3;
+
+	// printf("stride 1: %i\n", fmt.fmt.pix.bytesperline);
     ret = ioctl(mem2mem_fd, VIDIOC_S_FMT, &fmt);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
         perror("ioctl");
         return;
     }
-	printf("stride 2: %i\n", fmt.fmt.pix.bytesperline);
+	/* printf("stride 2: %i\n", fmt.fmt.pix.bytesperline); */
 
     /* Set format for capture */
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = DST_WIDTH;
-    fmt.fmt.pix.height = DST_HEIGHT;
-    fmt.fmt.pix.pixelformat = dst_format;
-    fmt.fmt.pix.field = V4L2_FIELD_ANY;
+	// single-plane format
+    /* fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE; */
+    /* fmt.fmt.pix.width = DST_WIDTH; */
+    /* fmt.fmt.pix.height = DST_HEIGHT; */
+    /* fmt.fmt.pix.pixelformat = dst_format; */
+    /* fmt.fmt.pix.field = V4L2_FIELD_ANY; */
+
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    fmt.fmt.pix_mp.width = DST_WIDTH;
+    fmt.fmt.pix_mp.height = DST_HEIGHT;
+    fmt.fmt.pix_mp.pixelformat = dst_format;
+    fmt.fmt.pix_mp.field = V4L2_FIELD_ANY;
+
+	// Y4: 4bits per pixel
+    fmt.fmt.pix_mp.num_planes = 1;
+    fmt.fmt.pix_mp.plane_fmt[0].sizeimage = 1872 * 1404 / 2;
+    fmt.fmt.pix_mp.plane_fmt[0].bytesperline = 1872 / 2;
 
     ret = ioctl(mem2mem_fd, VIDIOC_S_FMT, &fmt);
     if (ret != 0) {
@@ -339,7 +366,7 @@ static void init_mem2mem_dev()
         perror("ioctl");
         return;
     }
-	printf("stride 3: %i\n", fmt.fmt.pix.bytesperline);
+	/* printf("stride 3: %i\n", fmt.fmt.pix.bytesperline); */
 
     printf("crop was replaced by selection \n");
 }
@@ -355,14 +382,44 @@ static void process_mem2mem_frame()
     i = num_frames;
     //while (i--) {
     while (1) {
+		printf("Starting frame\n");
         clock_gettime(CLOCK_MONOTONIC, &start);
 
+		// Query the input buffer
+
         memset(&(buf), 0, sizeof(buf));
-        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        buf.memory = V4L2_MEMORY_DMABUF;
+        buf.index = 0;
+        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
         buf.bytesused = src_buf_size[0];
+		buf.flags = 0;
+        buf.memory = V4L2_MEMORY_DMABUF;
+		buf.length = 1;
+		buf.m.planes = (struct v4l2_plane*) calloc(
+				1,
+				sizeof(struct v4l2_plane)
+		);
+        buf.m.planes->m.fd = src_buf_fd[0];
+
+        ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
+        if (ret != 0) {
+            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+            perror("ioctl");
+            return;
+        }
+
+		// Query the output buffer
+        memset(&(buf), 0, sizeof(buf));
+
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        buf.memory = V4L2_MEMORY_DMABUF;
         buf.index = 0;
-        buf.m.fd = src_buf_fd[0];
+		buf.length = 1;
+		buf.m.planes = (struct v4l2_plane*) calloc(
+			1,
+			sizeof(struct v4l2_plane)
+		);
+        buf.m.planes->m.fd = dst_buf_fd[0];
+
         ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
         if (ret != 0) {
             fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -371,33 +428,32 @@ static void process_mem2mem_frame()
         }
 
         memset(&(buf), 0, sizeof(buf));
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
         buf.memory = V4L2_MEMORY_DMABUF;
-        buf.index = 0;
-        buf.m.fd = dst_buf_fd[0];
-        ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
+		buf.length = 1;
+		buf.m.planes = (struct v4l2_plane*) calloc(
+				1,
+				sizeof(struct v4l2_plane)
+		);
+        ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
+        /* printf("Dequeued source buffer, index: %d\n", buf.index); */
+		/* printf("C\n"); */
+
+        memset(&(buf), 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        buf.memory = V4L2_MEMORY_DMABUF;
+		buf.length = 1;
+		buf.m.planes = (struct v4l2_plane*) calloc(
+				1,
+				sizeof(struct v4l2_plane)
+		);
+        ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
         if (ret != 0) {
             fprintf(stderr, "%s:%d: ", __func__, __LINE__);
             perror("ioctl");
             return;
         }
-
-        memset(&(buf), 0, sizeof(buf));
-        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        buf.memory = V4L2_MEMORY_DMABUF;
-        ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
-        printf("Dequeued source buffer, index: %d\n", buf.index);
-
-        memset(&(buf), 0, sizeof(buf));
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_DMABUF;
-        ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
-        if (ret != 0) {
-            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-            perror("ioctl");
-            return;
-        }
-        printf("Dequeued dst buffer, index: %d\n", buf.index);
+        /* printf("Dequeued dst buffer, index: %d\n", buf.index); */
 
         clock_gettime(CLOCK_MONOTONIC, &end);
 
@@ -419,7 +475,7 @@ static void process_mem2mem_frame()
             }
         }
 		// modify the buffer
-        fillbuffer(src_format, src_buf_bo[0], frame_counter);
+        // fillbuffer(src_format, src_buf_bo[0], frame_counter);
 
 		frame_counter++;
 		printf("Press a control key\n");
@@ -544,10 +600,12 @@ static void start_mem2mem()
 
     init_mem2mem_dev();
 
-    memset(&(buf), 0, sizeof(buf));
+	// tell v4l2 that we want one DMABUF buffer for each type
+	// note that this  does not actually allocate anything - we just register
+	// them with the system
     reqbuf.count = 1;
-    reqbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    reqbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+    /* type = V4L2_BUF_TYPE_VIDEO_OUTPUT; */
     reqbuf.memory = V4L2_MEMORY_DMABUF;
     ret = ioctl(mem2mem_fd, VIDIOC_REQBUFS, &reqbuf);
     if (ret != 0) {
@@ -559,8 +617,8 @@ static void start_mem2mem()
     printf("Got %d src buffers\n", num_src_bufs);
 
     reqbuf.count = NUM_BUFS;
-    reqbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    reqbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    /* type = V4L2_BUF_TYPE_VIDEO_CAPTURE; */
     ret = ioctl(mem2mem_fd, VIDIOC_REQBUFS, &reqbuf);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -570,10 +628,20 @@ static void start_mem2mem()
     num_dst_bufs = reqbuf.count;
     printf("Got %d dst buffers\n", num_dst_bufs);
 
+	// NOW we actually allocate them
     for (i = 0; i < num_src_bufs; ++i) {
-        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        buf.memory = V4L2_MEMORY_DMABUF;
+		printf("LOOP\n");
+    	memset(&(buf), 0, sizeof(buf));
         buf.index = i;
+        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        buf.memory = V4L2_MEMORY_DMABUF;
+
+		buf.length = 1;
+		buf.m.planes = (struct v4l2_plane*) calloc(
+				1,
+				sizeof(struct v4l2_plane)
+		);
+
         ret = ioctl(mem2mem_fd, VIDIOC_QUERYBUF, &buf);
         if (ret != 0) {
             fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -581,10 +649,19 @@ static void start_mem2mem()
             return;
         }
 
-        src_buf_size[i] = buf.length;
+        src_buf_size[i] = buf.m.planes->length;
 
-        struct sp_bo* bo
-            = create_sp_bo(dev_sp, SRC_WIDTH, SRC_HEIGHT, 0, buf.length * 8 / (SRC_WIDTH * SRC_HEIGHT), get_drm_format(src_format), 0);
+		uint32_t bpp = buf.m.planes->length * 8 / (SRC_WIDTH * SRC_HEIGHT);
+
+		struct sp_bo* bo = create_sp_bo(
+					dev_sp,
+				   	SRC_WIDTH,
+				   	SRC_HEIGHT,
+				   	0,
+					bpp,
+				   	get_drm_format(src_format),
+				   	0
+				);
         if (!bo) {
             printf("Failed to create gem buf\n");
             exit(-1);
@@ -595,10 +672,19 @@ static void start_mem2mem()
         fillbuffer(src_format, src_buf_bo[i], 0);
     }
 
+	// Destination: R4 Buffer
     for (i = 0; i < num_dst_bufs; ++i) {
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_DMABUF;
+    	memset(&(buf), 0, sizeof(buf));
         buf.index = i;
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        buf.memory = V4L2_MEMORY_DMABUF;
+
+		buf.length = 1;
+		buf.m.planes = (struct v4l2_plane*) calloc(
+				1,
+				sizeof(struct v4l2_plane)
+		);
+
         ret = ioctl(mem2mem_fd, VIDIOC_QUERYBUF, &buf);
         if (ret != 0) {
             fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -607,20 +693,34 @@ static void start_mem2mem()
         }
 		printf("DST BUFFER LENGTH: %u\n", buf.length);
 
-        dst_buf_size[i] = buf.length;
-        struct sp_bo* bo
-            = create_sp_bo(dev_sp, DST_WIDTH, DST_HEIGHT, 0, buf.length * 8 / (DST_WIDTH * DST_HEIGHT), get_drm_format(dst_format), 0);
+        dst_buf_size[i] = buf.m.planes->length;
+		printf("length: %lu\n", buf.m.planes->length);
+
+		uint32_t bpp = buf.m.planes->length * 8 / (SRC_WIDTH * SRC_HEIGHT);
+
+		struct sp_bo* bo = create_sp_bo(
+			dev_sp,
+		   	DST_WIDTH,
+		   	DST_HEIGHT,
+		   	0,
+		   	bpp,
+		   	get_drm_format(dst_format), 0
+		);
         if (!bo) {
             printf("Failed to create gem buf\n");
             exit(-1);
         }
+		printf("dst buffer: bo->size: %lu pitch: %lu, depth: %lu, bpp: %lu\n",
+			bo->size, bo->pitch,
+			bo->depth, bo->bpp
+		);
 
         drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &dst_buf_fd[i]);
         dst_buf_bo[i] = bo;
         fillbuffer2(dst_format, bo);
     }
 
-    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     ret = ioctl(mem2mem_fd, VIDIOC_STREAMON, &type);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -628,7 +728,7 @@ static void start_mem2mem()
         return;
     }
 
-    type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     ret = ioctl(mem2mem_fd, VIDIOC_STREAMON, &type);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -638,7 +738,7 @@ static void start_mem2mem()
 
     process_mem2mem_frame();
 
-    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     ret = ioctl(mem2mem_fd, VIDIOC_STREAMOFF, &type);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -646,7 +746,7 @@ static void start_mem2mem()
         return;
     }
 
-    type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     ret = ioctl(mem2mem_fd, VIDIOC_STREAMOFF, &type);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -666,6 +766,8 @@ void init_drm_context()
         exit(-1);
     }
 
+	printf("post create_sp_dev\n");
+
     if (display) {
         ret = initialize_screens(dev_sp);
         if (ret) {
@@ -681,7 +783,7 @@ void init_drm_context()
             ;
         }
 
-		printf("If nothing is display, change it to crtcs[1] \n");
+		printf("If nothing is displayed, change it to crtcs[1] \n");
         test_crtc_sp = &dev_sp->crtcs[0];
         for (i = 0; i < test_crtc_sp->num_planes; i++) {
             plane_sp[i] = get_sp_plane(dev_sp, test_crtc_sp);

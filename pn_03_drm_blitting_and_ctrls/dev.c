@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 #include <drm.h>
 #include <drm_fourcc.h>
@@ -67,7 +68,8 @@ static int get_supported_format(struct sp_plane* plane, uint32_t* format)
     uint32_t i;
 
     for (i = 0; i < plane->plane->count_formats; i++) {
-        if (plane->plane->formats[i] == DRM_FORMAT_XRGB8888 || plane->plane->formats[i] == DRM_FORMAT_ARGB8888 || plane->plane->formats[i] == DRM_FORMAT_RGBA8888) {
+        //if (plane->plane->formats[i] == DRM_FORMAT_XRGB8888 || plane->plane->formats[i] == DRM_FORMAT_ARGB8888 || plane->plane->formats[i] == DRM_FORMAT_RGBA8888) {
+        if (plane->plane->formats[i] == DRM_FORMAT_R4){
             *format = plane->plane->formats[i];
             return 0;
         }
@@ -88,6 +90,7 @@ struct sp_dev* create_sp_dev(void)
         printf("failed to open card0\n");
         return NULL;
     }
+    ioctl(fd, DRM_IOCTL_SET_MASTER, NULL);
 
     dev = (struct sp_dev*)calloc(1, sizeof(*dev));
     if (!dev) {
