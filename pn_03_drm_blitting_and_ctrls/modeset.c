@@ -51,6 +51,11 @@ int initialize_screens(struct sp_dev *dev) {
 		}
 
 		/* Take the first unless there's a preferred mode */
+		/* note (July 2024, regarding the PineNote kernel:
+  			- we expose two formats: R4 and RGB24 (preferred)
+     		        - However, the whole point of the RGA usage is to provide R4 images to the kernel
+	       		- Therefore, we hardcode this here
+	        */
 		// the second should be: DRM_FORMAT_R4
 		m = &c->modes[1];
 		/* for (j = 0; j < c->count_modes; j++) { */
